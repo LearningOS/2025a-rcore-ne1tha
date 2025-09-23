@@ -14,6 +14,7 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::syscall::MAX_SYSCALL_NUM;
 use crate::config::MAX_APP_NUM;
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
@@ -52,6 +53,7 @@ lazy_static! {
     pub static ref TASK_MANAGER: TaskManager = {
         let num_app = get_num_app();
         let mut tasks = [TaskControlBlock {
+            syscall_count: [0; MAX_SYSCALL_NUM],
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
         }; MAX_APP_NUM];
@@ -72,6 +74,20 @@ lazy_static! {
 }
 
 impl TaskManager {
+    ///add count of syscall for task id
+    fn add_count_syscall(&self, id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_count[id] += 1;
+    }
+
+    ///get count of syscall for task id
+    fn count_syscall(&self, id: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_count[id]
+    }
+
     /// Run the first task in task list.
     ///
     /// Generally, the first task in task list is an idle task (we call it zero process later).
@@ -135,6 +151,16 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+}
+
+/// Add count of syscall for current task
+pub fn add_count_syscall(id: usize) {
+    TASK_MANAGER.add_count_syscall(id);
+}
+
+/// Get count of syscall for current task
+pub fn count_syscall(id: usize) -> usize {
+    TASK_MANAGER.count_syscall(id)
 }
 
 /// Run the first task in task list.
