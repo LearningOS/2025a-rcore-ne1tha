@@ -1,0 +1,8 @@
+{
+    "makefile.configurations": [
+        {
+            "makefile.makePath": "D:/mingw86/bin/mingw32-make",
+            "name": "Unnamed configuration 1"
+        }
+    ]
+}

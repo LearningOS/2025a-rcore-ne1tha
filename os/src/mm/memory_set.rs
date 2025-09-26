@@ -63,6 +63,7 @@ impl MemorySet {
             None,
         );
     }
+    /// Insert a new map area, and copy data if given.
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
@@ -70,6 +71,27 @@ impl MemorySet {
         }
         self.areas.push(map_area);
     }
+
+    /// Unmap a memory region
+    pub fn remove_area(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> isize{
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        
+        // Remove the mappings
+        let mut current_vpn = start_vpn;
+        while current_vpn < end_vpn {
+            self.page_table.unmap(current_vpn);
+            current_vpn.0 += 1;
+        }
+        
+        // Remove any MapArea that overlaps with this range
+        self.areas.retain(|area| {
+            !(area.vpn_range.get_start() >= start_vpn && area.vpn_range.get_end() <= end_vpn)
+        });
+        
+        0
+    }
+
     /// Mention that trampoline is not collected by areas.
     fn map_trampoline(&mut self) {
         self.page_table.map(
@@ -246,6 +268,8 @@ impl MemorySet {
         } else {
             false
         }
+
+
     }
 
     /// append the area to new_end
@@ -260,6 +284,16 @@ impl MemorySet {
             true
         } else {
             false
+        }
+    }
+
+    /// Get the rights of current task with virtual address
+    pub fn get_rights_with_virt_addr(&self, virt_addr: VirtAddr) -> Option<PTEFlags>  {
+        let vpn = virt_addr.floor();
+        if let Some(pte) = self.translate(vpn) {
+            Some(pte.flags() & (PTEFlags::R | PTEFlags::W | PTEFlags::X | PTEFlags::U))
+        } else {
+            None
         }
     }
 }
@@ -357,6 +391,7 @@ impl MapArea {
         }
     }
 }
+
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 /// map type for memory set: identical or framed

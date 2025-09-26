@@ -20,6 +20,7 @@ use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
+use crate::mm::{PTEFlags, VirtPageNum, VirtAddr};
 pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
@@ -71,6 +72,27 @@ lazy_static! {
 }
 
 impl TaskManager {
+    /// Get the rights of current task with virtual address
+    fn get_rights_with_virt_addr(&self, virt_addr: VirtAddr) -> Option<PTEFlags> {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].get_rights_with_virt_addr(virt_addr)
+    }
+
+    ///add count of syscall for task id
+    fn add_count_syscall(&self, _id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].record_syscall(_id);
+    }
+
+    ///get count of syscall for task id
+    fn count_syscall(&self, _id: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].get_syscall_count(_id)
+    }
+
     /// Run the first task in task list.
     ///
     /// Generally, the first task in task list is an idle task (we call it zero process later).
@@ -78,7 +100,7 @@ impl TaskManager {
     fn run_first_task(&self) -> ! {
         let mut inner = self.inner.exclusive_access();
         let next_task = &mut inner.tasks[0];
-        next_task.task_status = TaskStatus::Running;
+        (*next_task).task_status = TaskStatus::Running;
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
         drop(inner);
         let mut _unused = TaskContext::zero_init();
@@ -153,6 +175,107 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// Read a byte from the virtual address of current task
+    fn read_a_byte(&self, virt_addr: VirtAddr) -> Option<u8> {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].read_a_byte(virt_addr)
+    }
+
+    /// Write a byte to the virtual address of current task
+    fn write_a_byte(&self, virt_addr: VirtAddr, data: u8) -> bool {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].write_a_byte(virt_addr, data)
+    }
+
+    /// Map a memory region for current task
+    fn task_mmap(&self, addr: usize, len: usize, port: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].task_mmap(addr, len, port)
+    }
+
+    fn task_unmap(&self, addr: usize, len: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].task_unmap(addr, len)
+    }  
+}
+
+/// Check if the address range [addr, addr + len) has an address existing in current task
+pub fn check_if_address_exist(addr: usize, len: usize) -> bool {
+    let first_page = VirtAddr::from(addr).floor();
+    let last_page = VirtAddr::from(addr + len - 1).floor();
+    for vpn in first_page.0..=last_page.0 {
+        if TASK_MANAGER
+            .get_rights_with_virt_addr(VirtAddr::from(VirtPageNum(vpn)))
+            .is_some()
+        {
+            return true;
+        }
+    }
+    false
+}
+
+
+/// Check if the address range [addr, addr + len) have an address inexisting in current task
+pub fn check_if_address_inexist(addr: usize, len: usize) -> bool {
+    let first_page = VirtAddr::from(addr).floor();
+    let last_page = VirtAddr::from(addr + len - 1).floor();
+    for vpn in first_page.0..=last_page.0 {
+        if TASK_MANAGER
+            .get_rights_with_virt_addr(VirtAddr::from(VirtPageNum(vpn)))
+            .is_none()
+        {
+            return true;
+        }
+    }
+    false
+}
+
+
+/// Unmap a memory region for current task
+pub fn task_unmap(addr: usize, len: usize) -> isize {
+    if check_if_address_inexist(addr, len) {
+        return -1;
+    }
+    TASK_MANAGER.task_unmap(addr, len)
+}
+
+/// Map a memory region for current task
+pub fn task_mmap(addr: usize, len: usize, port: usize) -> isize {
+    if check_if_address_exist(addr, len) {
+        return -1;
+    }
+    TASK_MANAGER.task_mmap(addr, len, port)
+}
+
+/// Write a byte to the virtual address of current task
+pub fn write_a_byte(virt_addr: VirtAddr, data: u8) -> bool {
+    TASK_MANAGER.write_a_byte(virt_addr, data)
+}
+
+/// Read a byte from the virtual address of current task
+pub fn read_a_byte(virt_addr: VirtAddr) -> Option<u8> {
+    TASK_MANAGER.read_a_byte(virt_addr)
+}
+
+/// Get the rights of current task with virtual address
+pub fn get_rights_with_virt_addr(virt_addr: VirtAddr) -> Option<PTEFlags> {
+    TASK_MANAGER.get_rights_with_virt_addr(virt_addr)
+}
+
+
+/// Add count of syscall for current task
+pub fn add_count_syscall(id: usize) {
+    TASK_MANAGER.add_count_syscall(id);
+}
+
+/// Get count of syscall for current task
+pub fn count_syscall(id: usize) -> usize {
+    TASK_MANAGER.count_syscall(id)
 }
 
 /// Run the first task in task list.
