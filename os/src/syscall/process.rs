@@ -3,10 +3,10 @@ use alloc::sync::Arc;
 
 use crate::{
     loader::get_app_data_by_name,
-    mm::{translated_refmut, translated_str},
+    mm::{translated_refmut, translated_str, translated_byte_buffer},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next,
+        suspend_current_and_run_next, task_mmap
     },
 };
 
@@ -109,17 +109,57 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!(
         "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
         current_task().unwrap().pid.0
-    );
-    -1
+    );    let time_us = get_time_us();
+    let sec = time_us / 1_000_000;
+    let usec = time_us % 1_000_000;
+    let time_val = TimeVal { sec, usec };
+        unsafe {
+            let time_val_bytes =  core::slice::from_raw_parts(
+                &time_val as *const TimeVal as *const u8,
+                core::mem::size_of::<TimeVal>()
+            );
+            let token = current_user_token();
+            let ptr = _ts as *mut u8;
+            let len = core::mem::size_of::<TimeVal>();
+            let buffers = translated_byte_buffer(token, ptr, len);
+                        for buffer in buffers {
+                let bytes_remaining = len - bytes_copied;
+                if bytes_remaining == 0 {
+                    break;
+                }       
+                let copy_len = buffer.len().min(bytes_remaining);
+                buffer[..copy_len].copy_from_slice(&time_val_bytes[bytes_copied..bytes_copied + copy_len]);
+                bytes_copied += copy_len;
+            }
+        }
+    0
 }
 
 /// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_mmap IMPLEMENTED YET!");
+    // Check if start is page-aligned
+    if _start % PAGE_SIZE != 0 {
+        trace!("sys_mmap: start address not page-aligned");
+        return -1;
+    }
+    // Check if prot has invalid bits set (only bits 0-2 are valid)
+    if _port & !0x7 != 0 {
+        trace!("sys_mmap: prot has invalid bits set: {:#x}", _port);
+        return -1;
+    }
+    
+    // Check if prot is meaningful (at least one permission bit set)
+    if _port & 0x7 == 0 {
+        trace!("sys_mmap: prot has no meaningful permissions");
+        return -1;
+    }
+
+    task_mmap(
+        _start,
+        _len,
+        _port,
+    )
 }
 
 /// YOUR JOB: Implement munmap.

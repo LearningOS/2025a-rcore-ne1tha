@@ -76,6 +76,10 @@ pub fn run_tasks() {
     }
 }
 
+
+pub fn task_mmap(addr: usize, len: usize, prot: i32) -> isize {
+    todo!()
+}
 /// Get current task through take, leaving a None in its place
 pub fn take_current_task() -> Option<Arc<TaskControlBlock>> {
     PROCESSOR.exclusive_access().take_current()
