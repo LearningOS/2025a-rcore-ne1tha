@@ -329,7 +329,7 @@ impl MemorySet {
         let start = VirtAddr::from(addr).floor();
         let end = VirtAddr::from(addr + len - 1).ceil();
         for vpn in start.0..=end.0 {
-            if Some(()) == self.translate(VirtPageNum(vpn)) {
+            if self.translate(VirtPageNum(vpn)).is_some() {
                 return false;
             }
         }
@@ -344,7 +344,7 @@ impl MemorySet {
         let start = VirtAddr::from(addr).floor();
         let end = VirtAddr::from(addr + len - 1).ceil();
         for vpn in start.0..=end.0 {
-            if None == self.translate(VirtPageNum(vpn)) {
+            if self.translate(VirtPageNum(vpn)).is_none() {
                 return false;
             }
         }

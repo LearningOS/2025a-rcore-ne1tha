@@ -10,6 +10,9 @@ use crate::{
     },
 };
 use crate::config::PAGE_SIZE;
+use crate::timer::get_time_us;
+use crate::task::BIG_STRIDE;
+
 
 #[repr(C)]
 #[derive(Debug)]
@@ -123,7 +126,8 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
             let ptr = _ts as *mut u8;
             let len = core::mem::size_of::<TimeVal>();
             let buffers = translated_byte_buffer(token, ptr, len);
-                        for buffer in buffers {
+            let mut bytes_copied = 0; 
+            for buffer in buffers {
                 let bytes_remaining = len - bytes_copied;
                 if bytes_remaining == 0 {
                     break;
@@ -208,8 +212,8 @@ pub fn sys_spawn(_path: *const u8) -> isize {
         "kernel:pid[{}] sys_spawn",
         current_task().unwrap().pid.0
     );
-        let token = current_user_token();
-    let path = translated_str(token, path);
+    let token = current_user_token();
+    let path = translated_str(token,  _path);
     if let Some(data) = get_app_data_by_name(path.as_str()) {
         let task = current_task().unwrap();
         let new_task = task.spawn(data);
@@ -235,15 +239,15 @@ pub fn sys_set_priority(_prio: isize) -> isize {
         current_task().unwrap().pid.0
     );
     
-    if prio < 2 {
+    if _prio < 2 {
         return -1;
     }
     
     let task = current_task().unwrap();
     let mut inner = task.inner_exclusive_access();
     
-    inner.priority = prio as usize;
-    inner.pass = BIG_STRIDE / (prio as usize);
+    inner.priority = _prio as usize;
+    inner.pass = BIG_STRIDE / (_prio as usize);
     
-    prio
+    _prio
 }

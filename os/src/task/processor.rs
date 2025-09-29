@@ -87,20 +87,24 @@ pub fn check_range_old(addr: usize, len: usize) -> bool {
     current_task().unwrap().inner_exclusive_access().memory_set.check_if_address_inexist(addr, len)
 }
 
-
+/// Unmap a memory region in the current task's memory set
 pub fn task_unmap(addr: usize, len: usize) -> isize {
     if !check_range_old(addr, len) {
         return -1;
     }
-    current_task().unwrap().task_unmap(addr, len)
+    current_task()
+        .unwrap()
+        .task_unmap(addr, len)
 }
 
 /// Map a new memory region in the current task's memory set
-pub fn task_mmap(addr: usize, len: usize, prot: i32) -> isize {
+pub fn task_mmap(addr: usize, len: usize, prot: usize) -> isize {
     if !check_range_new(addr, len) {
         return -1;
     }
-    current_task().unwrap().task_mmap(addr, len, port)
+    current_task()
+        .unwrap()
+        .task_mmap(addr, len, prot)
 }
 /// Get current task through take, leaving a None in its place
 pub fn take_current_task() -> Option<Arc<TaskControlBlock>> {

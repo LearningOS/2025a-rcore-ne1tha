@@ -26,7 +26,8 @@ impl TaskManager {
         if let Some(task) = self.ready_queue.pop() {
             let mut inner = task.inner_exclusive_access();
             inner.stride = inner.stride.overflowing_add(inner.pass).0;
-            Some(task)
+            drop(inner);
+            Some(task.clone())
         } else {
             None
         }

@@ -8,10 +8,11 @@ use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
-
-
+use crate::mm::MapPermission;
+/// Default priority for processes
 pub const DEFAULT_PRIORITY: usize = 8;
-pub const BIG_STRIDE: usize = usize::MAX;
+/// A very big stride value for stride scheduling
+pub const BIG_STRIDE: usize =  0x7FFF_FFFF;
 /// Task control block structure
 ///
 /// Directly save the contents that will not change during running
@@ -24,7 +25,7 @@ pub struct TaskControlBlock {
     pub kernel_stack: KernelStack,
 
     /// Mutable
-    inner: UPSafeCell<TaskControlBlockInner>,
+    pub inner: UPSafeCell<TaskControlBlockInner>,
 }
 
 impl TaskControlBlock {
@@ -42,10 +43,20 @@ impl TaskControlBlock {
 /// Implement PartialOrd for TaskControlBlock
 impl PartialOrd for TaskControlBlock {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        // 比较 stride 值，选择最小的
-        let self_stride = self.inner_exclusive_access().stride;
-        let other_stride = other.inner_exclusive_access().stride;
-        Some(self_stride.cmp(&other_stride))
+        let self_stride = {
+            let inner = self.inner_exclusive_access();
+            let stride = inner.stride;
+            drop(inner); // 显式释放
+            stride
+        }; 
+        
+        let other_stride = {
+            let inner = other.inner_exclusive_access();
+            let stride = inner.stride;
+            drop(inner); // 显式释放
+            stride
+        }; 
+        Some(other_stride.cmp(&self_stride))
     }
 }
 /// Implement Ord for TaskControlBlock
@@ -61,9 +72,15 @@ impl Eq for TaskControlBlock {}
 /// Implement PartialEq for TaskControlBlock
 impl PartialEq for TaskControlBlock {
     fn eq(&self, other: &Self) -> bool {
-        // 基于 stride 判断相等
-        let self_stride = self.inner_exclusive_access().stride;
-        let other_stride = other.inner_exclusive_access().stride;
+        let self_stride = {
+            let inner = self.inner_exclusive_access();
+            inner.stride
+        }; 
+        
+        let other_stride = {
+            let inner = other.inner_exclusive_access();
+            inner.stride
+        }; 
         self_stride == other_stride
     }
 }
@@ -299,7 +316,7 @@ impl TaskControlBlock {
     }
 
     /// Map a memory region for current task. Return the new program break if success, -1 if failed.
-    pub fn task_mmap(&mut self, addr: usize, len: usize, port: usize) -> isize {
+    pub fn task_mmap(&self, addr: usize, len: usize, port: usize) -> isize {
         let addr_start = addr;
         let addr_end = addr + len;
         let perm = match port {
@@ -310,20 +327,22 @@ impl TaskControlBlock {
             4 => MapPermission::R | MapPermission::X | MapPermission::W,
             _ => return -1,
         };
-        self.inner_exclusive_access()
+        let mut inner = self.inner_exclusive_access();
+        inner
             .memory_set
             .insert_framed_area(VirtAddr(addr_start), VirtAddr(addr_end), perm);
         0
     }
 
     /// Unmap a memory region for current task. Return 0 if success
-    pub fn task_unmap(&mut self, addr: usize, len: usize) -> isize {
+    pub fn task_unmap(&self, addr: usize, len: usize) -> isize {
         let addr_start = addr;
         let addr_end = addr + len;
         self.inner_exclusive_access()
             .memory_set
-            .remove_framed_area(VirtAddr(addr_start), VirtAddr(addr_end))
-    }  
+            .remove_framed_area(VirtAddr(addr_start), VirtAddr(addr_end));
+        0
+    } 
 
 
 }
