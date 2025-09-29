@@ -76,9 +76,31 @@ pub fn run_tasks() {
     }
 }
 
+/// Check if all the address range [addr, addr+len) is mot mapped in the current task's memory set
+pub fn check_range_new(addr: usize, len: usize) -> bool {
+    current_task().unwrap().inner_exclusive_access().memory_set.check_if_address_exist(addr, len)
+}
 
+
+/// Check if all the address range [addr, addr+len) is mapped in the current task's memory set
+pub fn check_range_old(addr: usize, len: usize) -> bool {
+    current_task().unwrap().inner_exclusive_access().memory_set.check_if_address_inexist(addr, len)
+}
+
+
+pub fn task_unmap(addr: usize, len: usize) -> isize {
+    if !check_range_old(addr, len) {
+        return -1;
+    }
+    current_task().unwrap().task_unmap(addr, len)
+}
+
+/// Map a new memory region in the current task's memory set
 pub fn task_mmap(addr: usize, len: usize, prot: i32) -> isize {
-    todo!()
+    if !check_range_new(addr, len) {
+        return -1;
+    }
+    current_task().unwrap().task_mmap(addr, len, port)
 }
 /// Get current task through take, leaving a None in its place
 pub fn take_current_task() -> Option<Arc<TaskControlBlock>> {

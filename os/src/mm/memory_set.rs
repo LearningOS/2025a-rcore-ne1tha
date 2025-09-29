@@ -60,6 +60,26 @@ impl MemorySet {
             None,
         );
     }
+
+    /// remove all areas relates to the range, and unmap the vpns
+    pub fn remove_framed_area(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> isize {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        
+        // Remove the mappings
+        let mut current_vpn = start_vpn;
+        while current_vpn < end_vpn {
+            self.page_table.unmap(current_vpn);
+            current_vpn.0 += 1;
+        }
+        
+        // Remove any MapArea that overlaps with this range
+        self.areas.retain(|area| {
+            !(area.vpn_range.get_start() >= start_vpn && area.vpn_range.get_end() <= end_vpn)
+        });
+        
+        0
+    }
     /// remove a area
     pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
         if let Some((idx, area)) = self
@@ -299,6 +319,36 @@ impl MemorySet {
         } else {
             false
         }
+    }
+
+    /// Check if the address range [addr, addr + len) has an address existing in current task
+    pub fn check_if_address_exist(&self, addr: usize, len: usize) -> bool {
+        if len == 0 {
+            return false;
+        }
+        let start = VirtAddr::from(addr).floor();
+        let end = VirtAddr::from(addr + len - 1).ceil();
+        for vpn in start.0..=end.0 {
+            if Some(()) == self.translate(VirtPageNum(vpn)) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Check if the address range [addr, addr + len) has an address inexisting in current task
+    pub fn check_if_address_inexist(&self, addr: usize, len: usize) -> bool {
+        if len == 0 {
+            return false;
+        }
+        let start = VirtAddr::from(addr).floor();
+        let end = VirtAddr::from(addr + len - 1).ceil();
+        for vpn in start.0..=end.0 {
+            if None == self.translate(VirtPageNum(vpn)) {
+                return false;
+            }
+        }
+        true
     }
 }
 /// map area structure, controls a contiguous piece of virtual memory

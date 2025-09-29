@@ -9,6 +9,9 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
 
+
+pub const DEFAULT_PRIORITY: usize = 8;
+pub const BIG_STRIDE: usize = usize::MAX;
 /// Task control block structure
 ///
 /// Directly save the contents that will not change during running
@@ -35,6 +38,36 @@ impl TaskControlBlock {
         inner.memory_set.token()
     }
 }
+
+/// Implement PartialOrd for TaskControlBlock
+impl PartialOrd for TaskControlBlock {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        // 比较 stride 值，选择最小的
+        let self_stride = self.inner_exclusive_access().stride;
+        let other_stride = other.inner_exclusive_access().stride;
+        Some(self_stride.cmp(&other_stride))
+    }
+}
+/// Implement Ord for TaskControlBlock
+impl Ord for TaskControlBlock {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+/// Implement Eq for TaskControlBlock
+impl Eq for TaskControlBlock {}
+
+
+/// Implement PartialEq for TaskControlBlock
+impl PartialEq for TaskControlBlock {
+    fn eq(&self, other: &Self) -> bool {
+        // 基于 stride 判断相等
+        let self_stride = self.inner_exclusive_access().stride;
+        let other_stride = other.inner_exclusive_access().stride;
+        self_stride == other_stride
+    }
+}
+
 
 pub struct TaskControlBlockInner {
     /// The physical page number of the frame where the trap context is placed
@@ -68,6 +101,15 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Current stride value for scheduling
+    pub stride: usize,
+    
+    /// Pass value (BigStride / priority)
+    pub pass: usize,
+    
+    /// Process priority (>= 2)
+    pub priority: usize,
 }
 
 impl TaskControlBlockInner {
@@ -118,6 +160,9 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    stride: 0,
+                    priority: DEFAULT_PRIORITY,
+                    pass: BIG_STRIDE / DEFAULT_PRIORITY,
                 })
             },
         };
@@ -191,6 +236,9 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    stride: 0,
+                    priority: DEFAULT_PRIORITY,
+                    pass: BIG_STRIDE / DEFAULT_PRIORITY,
                 })
             },
         });
@@ -204,6 +252,19 @@ impl TaskControlBlock {
         task_control_block
         // **** release child PCB
         // ---- release parent PCB
+    }
+
+    /// parent process spawn a new child process
+    /// the new child process loads elf_data as its user space
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let task = TaskControlBlock::new(elf_data);
+        let task = Arc::new(task);
+        // ---- access parent PCB exclusively
+        let mut parent_inner = self.inner_exclusive_access();
+        task.inner_exclusive_access().parent = Some(Arc::downgrade(self));
+        parent_inner.children.push(task.clone());
+        // ---- release parent PCB
+        task
     }
 
     /// get pid of process
@@ -236,6 +297,35 @@ impl TaskControlBlock {
             None
         }
     }
+
+    /// Map a memory region for current task. Return the new program break if success, -1 if failed.
+    pub fn task_mmap(&mut self, addr: usize, len: usize, port: usize) -> isize {
+        let addr_start = addr;
+        let addr_end = addr + len;
+        let perm = match port {
+            0 => MapPermission::empty(),
+            1 => MapPermission::R,
+            2 => MapPermission::R | MapPermission::W,
+            3 => MapPermission::R | MapPermission::X,
+            4 => MapPermission::R | MapPermission::X | MapPermission::W,
+            _ => return -1,
+        };
+        self.inner_exclusive_access()
+            .memory_set
+            .insert_framed_area(VirtAddr(addr_start), VirtAddr(addr_end), perm);
+        0
+    }
+
+    /// Unmap a memory region for current task. Return 0 if success
+    pub fn task_unmap(&mut self, addr: usize, len: usize) -> isize {
+        let addr_start = addr;
+        let addr_end = addr + len;
+        self.inner_exclusive_access()
+            .memory_set
+            .remove_framed_area(VirtAddr(addr_start), VirtAddr(addr_end))
+    }  
+
+
 }
 
 #[derive(Copy, Clone, PartialEq)]
