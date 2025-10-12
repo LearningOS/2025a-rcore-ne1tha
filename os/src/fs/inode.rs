@@ -4,7 +4,7 @@
 //!
 //! `UPSafeCell<OSInodeInner>` -> `OSInode`: for static `ROOT_INODE`,we
 //! need to wrap `OSInodeInner` into `UPSafeCell`
-use super::File;
+use super::{File, Stat, StatMode};
 use crate::drivers::BLOCK_DEVICE;
 use crate::mm::UserBuffer;
 use crate::sync::UPSafeCell;
@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 use bitflags::*;
 use easy_fs::{EasyFileSystem, Inode};
 use lazy_static::*;
-
+use core::any::Any;
 /// inode in memory
 /// A wrapper around a filesystem inode
 /// to implement File trait atop
@@ -29,6 +29,37 @@ pub struct OSInodeInner {
 }
 
 impl OSInode {
+    /// 创建硬链接
+    pub fn link(&self, old_name: &str, new_name: &str) -> Result<(), ()> {
+        let inner = self.inner.exclusive_access();
+        inner.inode.link(old_name, new_name)
+    }
+    
+    /// 取消链接
+    pub fn unlink(&self, name: &str) -> Result<(), ()> {
+        let inner = self.inner.exclusive_access();
+        inner.inode.unlink(name)
+    }
+    
+
+    /// 获取文件状态
+    pub fn get_stat(&self) -> Stat {
+        let inner = self.inner.exclusive_access();
+        let stat_info = inner.inode.get_stat_info();
+        
+        Stat {
+            dev: 0,
+            ino: stat_info.ino,
+            mode: if stat_info.is_dir {
+                StatMode::DIR
+            } else {
+                StatMode::FILE
+            },
+            nlink: stat_info.nlink,
+            size: stat_info.size,
+            pad: [0; 6],
+        }
+    }
     /// create a new inode in memory
     pub fn new(readable: bool, writable: bool, inode: Arc<Inode>) -> Self {
         Self {
@@ -56,6 +87,7 @@ impl OSInode {
 }
 
 lazy_static! {
+    /// The root inode of the filesystem
     pub static ref ROOT_INODE: Arc<Inode> = {
         let efs = EasyFileSystem::open(BLOCK_DEVICE.clone());
         Arc::new(EasyFileSystem::root_inode(&efs))
@@ -126,6 +158,11 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
 }
 
 impl File for OSInode {
+
+    /// for downcasting
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
     fn readable(&self) -> bool {
         self.readable
     }

@@ -31,7 +31,21 @@ pub struct PhysPageNum(pub usize);
 pub struct VirtPageNum(pub usize);
 
 /// Debugging
+use core::ops::{Add, Sub};
 
+impl Add<usize> for VirtAddr {
+    type Output = Self;
+    fn add(self, other: usize) -> Self {
+        Self(self.0 + other)
+    }
+}
+
+impl Sub<usize> for VirtAddr {
+    type Output = Self;
+    fn sub(self, other: usize) -> Self {
+        Self(self.0 - other)
+    }
+}
 impl Debug for VirtAddr {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!("VA:{:#x}", self.0))

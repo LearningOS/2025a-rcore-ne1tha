@@ -31,6 +31,19 @@ lazy_static! {
         Arc::new(unsafe { UPSafeCell::new(MemorySet::new_kernel()) });
 }
 
+
+/// 内存操作错误类型
+#[derive(Debug)]
+pub enum MemoryError {
+    InvalidAlignment,
+    InvalidProtection,
+    Overlap,
+    NotMapped,
+    NoMemory,
+}
+
+// 定义类型别名
+pub type MemoryResult<T> = Result<T, MemoryError>;
 /// the kernel token
 pub fn kernel_token() -> usize {
     KERNEL_SPACE.exclusive_access().token()
@@ -43,6 +56,109 @@ pub struct MemorySet {
 }
 
 impl MemorySet {
+
+    /// 内存映射
+    pub fn mmap(&mut self, start: VirtAddr, len: usize, prot: usize) -> MemoryResult<()> {
+        if !start.aligned() {
+            return Err(MemoryError::InvalidAlignment);
+        }
+        
+        // 检查prot参数有效性
+        if (prot & !0x7) != 0 {
+            return Err(MemoryError::InvalidProtection);
+        }
+        
+        if (prot & 0x7) == 0 {
+            return Err(MemoryError::InvalidProtection);
+        }
+        
+        let end = start + len;
+        if end < start {
+            return Err(MemoryError::InvalidAlignment);
+        }
+        
+        // 检查地址范围是否重叠 - 通过公共方法检查
+        if self.check_overlap(start, end) {
+            return Err(MemoryError::Overlap);
+        }
+        
+        // 创建映射权限
+        let mut permission = MapPermission::U;
+        if prot & 0x1 != 0 { // PROT_READ
+            permission |= MapPermission::R;
+        }
+        if prot & 0x2 != 0 { // PROT_WRITE
+            permission |= MapPermission::W;
+        }
+        if prot & 0x4 != 0 { // PROT_EXEC
+            permission |= MapPermission::X;
+        }
+        
+        // 创建映射区域
+        let map_area = MapArea::new(start, end, MapType::Framed, permission);
+
+        self.push(map_area, None);
+        
+        Ok(())
+    }
+    
+    /// 取消内存映射
+    pub fn munmap(&mut self, start: VirtAddr, len: usize) -> MemoryResult<()> {
+        if !start.aligned() {
+            return Err(MemoryError::InvalidAlignment);
+        }
+        
+        let end = start + len;
+        
+        // 计算对应的虚拟页号范围
+        let start_vpn = start.floor();
+        let end_vpn = end.ceil();
+        
+        // 检查所有要取消映射的页是否都已被映射
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            if self.translate(vpn).is_none() {
+                return Err(MemoryError::NotMapped);
+            }
+        }
+        
+        // 查找并移除对应的映射区域
+        if let Some(index) = self.find_area_by_range(start, end) {
+            let mut area = self.areas.remove(index);
+            area.unmap(&mut self.page_table);
+            Ok(())
+        } else {
+            Err(MemoryError::NotMapped)
+        }
+    }
+    
+    /// 检查地址范围是否重叠（公共方法）
+    pub fn check_overlap(&self, start: VirtAddr, end: VirtAddr) -> bool {
+        for area in &self.areas {
+            let area_start: VirtAddr = area.vpn_range.get_start().into();
+            let area_end: VirtAddr = area.vpn_range.get_end().into();
+            if start < area_end && end > area_start {
+                return true;
+            }
+        }
+        false
+    }
+    
+    /// 通过范围查找区域索引（辅助方法）
+    fn find_area_by_range(&self, start: VirtAddr, end: VirtAddr) -> Option<usize> {
+        for (i, area) in self.areas.iter().enumerate() {
+            let area_start: VirtAddr = area.vpn_range.get_start().into();
+            let area_end: VirtAddr = area.vpn_range.get_end().into();
+            if area_start == start && area_end == end {
+                return Some(i);
+            }
+        }
+        None
+    }
+    
+    /// 检查虚拟地址是否已映射（公共方法）
+    pub fn is_mapped(&self, vpn: VirtPageNum) -> bool {
+        self.translate(vpn).is_some()
+    }
     /// Create a new empty `MemorySet`.
     pub fn new_bare() -> Self {
         Self {

@@ -86,6 +86,7 @@ pub struct DiskInode {
     pub indirect1: u32,
     pub indirect2: u32,
     type_: DiskInodeType,
+    nlink: u32,
 }
 
 impl DiskInode {
@@ -97,6 +98,22 @@ impl DiskInode {
         self.indirect1 = 0;
         self.indirect2 = 0;
         self.type_ = type_;
+        self.nlink = 1; 
+    }
+    /// 增加链接计数
+    pub fn inc_nlink(&mut self) {
+        self.nlink += 1;
+    }
+    
+    /// 减少链接计数
+    pub fn dec_nlink(&mut self) -> u32 {
+        self.nlink -= 1;
+        self.nlink
+    }
+    
+    /// 获取链接计数
+    pub fn get_nlink(&self) -> u32 {
+        self.nlink
     }
     /// Whether this inode is a directory
     pub fn is_dir(&self) -> bool {

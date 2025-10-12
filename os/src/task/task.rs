@@ -10,7 +10,7 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cell::RefMut;
-
+const BIG_STRIDE: usize = 0x7FFF_FFFF; 
 /// Task control block structure
 ///
 /// Directly save the contents that will not change during running
@@ -71,6 +71,13 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Task priority (must be >= 2)
+    pub priority: isize,
+    /// Current stride value
+    pub stride: usize,
+    /// Pass value = BIG_STRIDE / priority
+    pub pass: usize,
 }
 
 impl TaskControlBlockInner {
@@ -111,6 +118,9 @@ impl TaskControlBlock {
         let pid_handle = pid_alloc();
         let kernel_stack = kstack_alloc();
         let kernel_stack_top = kernel_stack.get_top();
+
+        let priority = 16; // 默认优先级
+        let pass = BIG_STRIDE / (priority as usize);
         // push a task context which goes to trap_return to the top of kernel stack
         let task_control_block = Self {
             pid: pid_handle,
@@ -135,6 +145,9 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    priority,
+                    stride: 0,
+                    pass,
                 })
             },
         };
@@ -150,6 +163,18 @@ impl TaskControlBlock {
         task_control_block
     }
 
+
+    /// Set task priority
+    pub fn set_priority(&self, priority: isize) {
+        let mut inner = self.inner_exclusive_access();
+        inner.priority = priority;
+    }
+    
+    /// Get task priority
+    pub fn get_priority(&self) -> isize {
+        let inner = self.inner_exclusive_access();
+        inner.priority
+    }
     /// Load a new elf to replace the original application address space and start execution
     pub fn exec(&self, elf_data: &[u8]) {
         // memory_set with elf program headers/trampoline/trap context/user stack
@@ -216,6 +241,9 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    priority: parent_inner.priority,
+                    stride: 0,
+                    pass: BIG_STRIDE / (parent_inner.priority as usize),
                 })
             },
         });
