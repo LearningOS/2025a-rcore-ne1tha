@@ -1,6 +1,7 @@
 //! Conditian variable
-
-use crate::sync::{Mutex, UPSafeCell};
+use crate::sync::mutex::Mutex;
+use crate::sync::{UPSafeCell};
+use crate::task::process::KernelMutex;
 use crate::task::{block_current_and_run_next, current_task, wakeup_task, TaskControlBlock};
 use alloc::{collections::VecDeque, sync::Arc};
 
@@ -36,13 +37,19 @@ impl Condvar {
     }
 
     /// blocking current task, let it wait on the condition variable
-    pub fn wait(&self, mutex: Arc<dyn Mutex>) {
+    pub fn wait(&self, mutex: KernelMutex) {
         trace!("kernel: Condvar::wait_with_mutex");
-        mutex.unlock();
+        match mutex {
+            KernelMutex::Blocking(ref m) => m.unlock(),
+            KernelMutex::Spin(ref m) => m.unlock(),
+        }
         let mut inner = self.inner.exclusive_access();
         inner.wait_queue.push_back(current_task().unwrap());
         drop(inner);
         block_current_and_run_next();
-        mutex.lock();
+        match mutex {
+            KernelMutex::Blocking(ref m) => m.lock(),
+            KernelMutex::Spin(ref m) => m.lock(),
+        }
     }
 }

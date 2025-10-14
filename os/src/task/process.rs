@@ -7,7 +7,7 @@ use super::{add_task, SignalFlags};
 use super::{pid_alloc, PidHandle};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{translated_refmut, MemorySet, KERNEL_SPACE};
-use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell};
+use crate::sync::{Condvar, MutexBlocking, MutexSpin, Semaphore, UPSafeCell};
 use crate::trap::{trap_handler, TrapContext};
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
@@ -21,6 +21,14 @@ pub struct ProcessControlBlock {
     pub pid: PidHandle,
     /// mutable
     inner: UPSafeCell<ProcessControlBlockInner>,
+}
+/// KernelMutex
+#[derive(Clone)]
+pub enum KernelMutex {
+    /// MutexBlocking
+    Blocking(Arc<MutexBlocking>),
+    /// MutexSpin
+    Spin(Arc<MutexSpin>),
 }
 
 /// Inner of Process Control Block
@@ -43,8 +51,10 @@ pub struct ProcessControlBlockInner {
     pub tasks: Vec<Option<Arc<TaskControlBlock>>>,
     /// task resource allocator
     pub task_res_allocator: RecycleAllocator,
+    /// enable deadlock detection
+    pub deadlock_detection_enabled: bool,
     /// mutex list
-    pub mutex_list: Vec<Option<Arc<dyn Mutex>>>,
+    pub mutex_list: Vec<Option<KernelMutex>>,
     /// semaphore list
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
@@ -116,6 +126,7 @@ impl ProcessControlBlock {
                     signals: SignalFlags::empty(),
                     tasks: Vec::new(),
                     task_res_allocator: RecycleAllocator::new(),
+                    deadlock_detection_enabled: false, 
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
@@ -228,6 +239,7 @@ impl ProcessControlBlock {
                 new_fd_table.push(None);
             }
         }
+        let new_mutex_list: Vec<Option<KernelMutex>> = parent.mutex_list.iter().map(|m| m.clone()).collect();
         // create child process pcb
         let child = Arc::new(Self {
             pid,
@@ -242,7 +254,8 @@ impl ProcessControlBlock {
                     signals: SignalFlags::empty(),
                     tasks: Vec::new(),
                     task_res_allocator: RecycleAllocator::new(),
-                    mutex_list: Vec::new(),
+                    deadlock_detection_enabled: false, 
+                    mutex_list: new_mutex_list,
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
                 })

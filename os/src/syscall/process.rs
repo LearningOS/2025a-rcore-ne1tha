@@ -1,13 +1,13 @@
 use crate::{
     fs::{open_file, OpenFlags},
-    mm::{translated_ref, translated_refmut, translated_str},
+    mm::{translated_ref, translated_refmut, translated_str, VirtAddr},
     task::{
         current_process, current_task, current_user_token, exit_current_and_run_next, pid2process,
         suspend_current_and_run_next, SignalFlags,
     },
 };
 use alloc::{string::String, sync::Arc, vec::Vec};
-
+use crate::config::PAGE_SIZE;
 #[repr(C)]
 #[derive(Debug)]
 pub struct TimeVal {
@@ -146,16 +146,72 @@ pub fn sys_kill(pid: usize, signal: u32) -> isize {
     }
 }
 
-/// get_time syscall
-///
-/// YOUR JOB: get time with second and microsecond
-/// HINT: You might reimplement it with virtual memory management.
-/// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().process.upgrade().unwrap().getpid()
-    );
+/// get time with second and microsecond
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
+    trace!("kernel:pid[{}] sys_get_time", current_task().unwrap().process.upgrade().unwrap().getpid());
+    
+    let token = current_user_token();
+
+    
+    // 处理 TimeVal 可能跨页的情况
+    let mut time_val = TimeVal {
+        sec: 0,
+        usec: 0,
+    };
+    
+    // 获取当前时间（微秒）
+    let time_us = crate::timer::get_time_us();
+    time_val.sec = time_us / 1_000_000;
+    time_val.usec = time_us % 1_000_000;
+    
+    // 安全地将数据复制到用户空间
+    let page_table = crate::mm::PageTable::from_token(token);
+    let ts_va = VirtAddr::from(ts as usize);
+    
+    // 检查 TimeVal 是否跨页
+    let start_page = ts_va.floor();
+    let end_va = VirtAddr(ts_va.0 + core::mem::size_of::<TimeVal>());
+    let end_page = VirtAddr::from(end_va).floor();
+    
+    if start_page == end_page {
+        // 单页情况
+        if let Some(pa) = page_table.translate_va(ts_va) {
+
+            let ts_mut = pa.get_mut::<TimeVal>();
+            *ts_mut = time_val;
+            return 0;
+        }
+    } else {
+        // 跨页情况 - 分别处理两个页
+        let first_page_size = PAGE_SIZE - ts_va.page_offset();
+        let second_page_size = core::mem::size_of::<TimeVal>() - first_page_size;
+        
+        // 复制第一部分到第一页
+        if let Some(pa) = page_table.translate_va(ts_va) {
+            unsafe {
+                let src_ptr = &time_val as *const TimeVal as *const u8;
+                let dst_ptr = pa.0 as *mut u8;
+                core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, first_page_size);
+            }
+        } else {
+            return -1;
+        }
+        
+        // 复制第二部分到第二页
+        let second_va = VirtAddr::from(ts_va.0 + first_page_size);
+        if let Some(pa) = page_table.translate_va(second_va) {
+            unsafe {
+                let src_ptr = (&time_val as *const TimeVal as *const u8).add(first_page_size);
+                let dst_ptr = pa.0 as *mut u8;
+                core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, second_page_size);
+            }
+        } else {
+            return -1;
+        }
+        
+        return 0;
+    }
+    
     -1
 }
 

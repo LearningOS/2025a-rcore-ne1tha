@@ -58,8 +58,8 @@ pub struct MutexBlocking {
 }
 
 pub struct MutexBlockingInner {
-    locked: bool,
-    wait_queue: VecDeque<Arc<TaskControlBlock>>,
+    pub owner: Option<usize>, // Changed from `locked: bool`
+    pub wait_queue: VecDeque<Arc<TaskControlBlock>>,
 }
 
 impl MutexBlocking {
@@ -69,11 +69,18 @@ impl MutexBlocking {
         Self {
             inner: unsafe {
                 UPSafeCell::new(MutexBlockingInner {
-                    locked: false,
+                    owner: None,
                     wait_queue: VecDeque::new(),
                 })
             },
         }
+    }
+    /// 允许以闭包的方式安全地访问内部数据
+    pub fn with_inner<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&MutexBlockingInner) -> R,
+    {
+        f(&self.inner.exclusive_access())
     }
 }
 
@@ -82,12 +89,19 @@ impl Mutex for MutexBlocking {
     fn lock(&self) {
         trace!("kernel: MutexBlocking::lock");
         let mut mutex_inner = self.inner.exclusive_access();
-        if mutex_inner.locked {
+        if mutex_inner.owner.is_some() {
             mutex_inner.wait_queue.push_back(current_task().unwrap());
             drop(mutex_inner);
             block_current_and_run_next();
         } else {
-            mutex_inner.locked = true;
+            let tid = current_task()
+                .unwrap()
+                .inner_exclusive_access()
+                .res
+                .as_ref()
+                .unwrap()
+                .tid;
+            mutex_inner.owner = Some(tid);
         }
     }
 
@@ -95,11 +109,18 @@ impl Mutex for MutexBlocking {
     fn unlock(&self) {
         trace!("kernel: MutexBlocking::unlock");
         let mut mutex_inner = self.inner.exclusive_access();
-        assert!(mutex_inner.locked);
+        assert!(mutex_inner.owner.is_some());
         if let Some(waking_task) = mutex_inner.wait_queue.pop_front() {
+            let waking_tid = waking_task
+                .inner_exclusive_access()
+                .res
+                .as_ref()
+                .unwrap()
+                .tid;
+            mutex_inner.owner = Some(waking_tid); // Transfer ownership
             wakeup_task(waking_task);
         } else {
-            mutex_inner.locked = false;
+            mutex_inner.owner = None;
         }
     }
 }
